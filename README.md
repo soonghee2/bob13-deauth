@@ -10,7 +10,13 @@ AP ↔ Station 간 연결을 끊거나 혼란을 발생시키는 공격 툴.**
 * 스테이션 → AP 방향 Deauth
 * 브로드캐스트 Deauth (근처 모든 기기 날아감)
 * 혹은 `-auth` 옵션으로 Auth/AUSSO(Association?) 메시지 스팸
-
+1) 공격자 장비를 모니터 모드로 설정
+2) 주변 Wi-Fi AP/BSSID/mac 목록 수집
+3) AP–Station 관계(연결된 클라이언트 MAC) 파악
+4) 공격 대상 선택
+5) Radiotap + 802.11 Deauth 프레임 생성
+6) 공격자가 Deauth 스푸핑 패킷 무한 송출
+7) 피해자 단말은 AP와의 연결이 강제로 끊김
 
 ---
 
